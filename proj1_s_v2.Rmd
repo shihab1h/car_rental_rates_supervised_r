@@ -1,0 +1,957 @@
+---
+title: An R Markdown document converted from "proj1_s_v2.ipynb"
+output: html_document
+---
+
+<h2> <span style="color: Maroon;"> UniMi | SL | Supervised Learning | Stats'N'Facts </span> </h2>
+
+## <span style="color: Blue;"> 0. Outline [TODO] </span>
+
+## <span style="color: IndianRed;"> 1. Notebook Setup </span>
+
+### <span style="color: LightSalmon;"> *1.1 Load Required Libraries* </span>
+
+```{r}
+library(MASS)
+library(ggpubr)
+library(olsrr)
+library(dplyr)
+library(purrr)
+library (DescTools)
+library(gplots)
+library(car)
+library(Hmisc)
+library(PerformanceAnalytics)
+library(olsrr)
+library(ISLR)
+library(rpart)
+library(rpart.plot)
+library(party)
+library("partykit")
+library(caTools)
+library(caret)
+library(randomForest)
+library(ranger)
+```
+
+### <span style="color: LightSalmon;"> *1.2 Load Dataset* </span>
+
+```{r}
+carRentals <-  read.csv(file='CarRentalDataV1.csv', stringsAsFactors=TRUE)
+```
+
+### <span style="color: LightSalmon;"> *1.3 Data Description* **[TODO]** </span>
+
+### <span style="color: LightSalmon;"> *1.4 User-defined Functions* **[TODO]** </span>
+
+```{r}
+mse.usd <- function(model){
+    mean(exp(model$residuals)^2)
+}
+```
+
+```{r}
+mae.usd <- function(model){
+    mean(abs(exp(model$residuals)))
+}
+```
+
+## <span style="color: IndianRed;"> 2. Exploratory Data Analysis </span>
+
+### <span style="color: LightSalmon;"> 2.1 Initial Overall Exploration </span>
+
+```{r}
+names(carRentals)
+```
+
+```{r}
+head(carRentals)
+```
+
+```{r}
+str(carRentals)
+```
+
+**Correlations of Numeric Features**
+
+```{r}
+cR.numeric <-carRentals %>% select(rate.daily, vehicle.year, rating, reviewCount, renterTripsTaken)
+rcorr(as.matrix(cR.numeric))
+```
+
+```{r}
+scatterplotMatrix(cR.numeric, regLine=TRUE)
+```
+
+```{r}
+chart.Correlation(cR.numeric, histogram=TRUE, pch=19)
+```
+
+### <span style="color: LightSalmon;"> 2.2 Exploration of Dependent Variable: rate.daily </span>
+
+#### <span style="color: #FFBF00;"> *2.2.1 Overall Assessment of rate.daily* </span>
+
+**Summary of dependent variable**
+
+```{r}
+summary(carRentals$rate.daily)
+```
+
+It appears that our dependent variable suffers from:
+* Non-Normality: Mean is almost 50% larger than median
+* Severe Outliers: Max rate is 21 IQR's away from 3rd Qu.
+
+**Normality Test**
+
+```{r}
+options(repr.plot.width=4, repr.plot.height=3)
+```
+
+```{r}
+ggqqplot(carRentals$rate.daily)
+```
+
+```{r}
+ggdensity(carRentals, x="rate.daily", fill="lightgray", title="rate.daily") +
+  stat_overlay_normal_density(color="red", linetype="dashed")
+```
+
+```{r}
+hist(carRentals$rate.daily, breaks=sqrt(nrow(carRentals)))
+```
+
+Attempting to use Logarithm to improve normality
+
+```{r}
+carRentals$log.rate.daily <- log(carRentals$rate.daily)
+```
+
+```{r}
+summary(carRentals$log.rate.daily)
+```
+
+```{r}
+ggqqplot(carRentals$log.rate.daily)
+```
+
+```{r}
+ggdensity(carRentals, x="log.rate.daily", fill="lightgray", title="log.rate.daily") +
+  stat_overlay_normal_density(color="red", linetype="dashed")
+```
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=4)
+```
+
+```{r}
+par(mfrow=c(1,2))
+hist(carRentals$rate.daily, main="rate.daily", breaks=sqrt(nrow(carRentals)))
+hist(carRentals$log.rate.daily, main="log.rate.daily", breaks=sqrt(nrow(carRentals)))
+```
+
+#### <span style="color: #FFBF00;"> *2.2.2 Handling Outliers of rate.daily* </span>
+
+**Outliers of rate.daily**
+
+```{r}
+cutoff.mult <- 2
+```
+
+```{r}
+uq <- quantile(carRentals$rate.daily, .75)
+lq <- quantile(carRentals$rate.daily, .25)
+iqr <- uq - lq
+outlier.upper.cutoff <- uq + cutoff.mult * iqr
+```
+
+```{r}
+nrow(carRentals[carRentals$rate.daily > outlier.upper.cutoff,])
+```
+
+**Outliers of log.rate.daily**
+
+```{r}
+uq <- quantile(carRentals$log.rate.daily, .75)
+lq <- quantile(carRentals$log.rate.daily, .25)
+iqr <- uq - lq
+outlier.upper.cutoff <- uq + cutoff.mult * iqr
+```
+
+```{r}
+nrow(carRentals[carRentals$log.rate.daily > outlier.upper.cutoff,])
+```
+
+```{r}
+print(summary(carRentals[carRentals$log.rate.daily > outlier.upper.cutoff,]$fuelType))
+```
+
+```{r}
+print(summary(carRentals[carRentals$log.rate.daily > outlier.upper.cutoff,]$vehicle.year))
+```
+
+Very few rental cars are classical from the last century, *which likely have a different pricing mechanism than the bulk of rental cars*
+
+```{r}
+carRentals[carRentals$vehicle.year < (2012-cutoff.mult*(2019-2012)),]$vehicle.year
+```
+
+**Exploring the remaining outliers of log.rate.daily which are not classical cars**
+
+```{r}
+carRentals[carRentals$log.rate.daily > outlier.upper.cutoff & carRentals$vehicle.year > (2012-cutoff.mult*(2019-2012)),]
+```
+
+```{r}
+unique(carRentals[carRentals$log.rate.daily > outlier.upper.cutoff & carRentals$vehicle.year > (2012-cutoff.mult*(2019-2012)),]$vehicle.make)
+```
+
+It appears that most current rental cars with outlier log.rate.daily are legitimate data points of fancier car models
+
+### <span style="color: LightSalmon;"> 2.3 Relations to Numerical Features </span>
+
+#### <span style="color: #FFBF00;"> *2.3.1 Relationship of rate.day ~ vehicle.year* </span>
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ vehicle.year, data=carRentals)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+options(repr.plot.width=7, repr.plot.height=5)
+```
+
+```{r}
+plot(log.rate.daily ~ vehicle.year, pch=19, data=carRentals)
+abline(lm.fit, col="red", lwd=3)
+```
+
+**Dropping classical cars outliers**
+
+```{r}
+cutoff.mult <- 3
+uq <- quantile(carRentals$vehicle.year, .75)
+lq <- quantile(carRentals$vehicle.year, .25)
+iqr <- uq - lq
+outlier.lower.cutoff <- lq - cutoff.mult * iqr
+```
+
+```{r}
+outlier.lower.cutoff
+```
+
+```{r}
+classical.rows <- as.numeric(rownames(carRentals[carRentals$vehicle.year < outlier.lower.cutoff,]))
+```
+
+```{r}
+carRentals[classical.rows,]
+```
+
+```{r}
+carRentals.noClassical <- carRentals[-classical.rows,]
+lm.fit <- lm(log.rate.daily ~ vehicle.year, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+plot(log.rate.daily ~ vehicle.year, pch=19, data=carRentals.noClassical)
+abline(lm.fit, col="red", lwd=3)
+```
+
+Classical car rentals likely have a different market than regular rental cars. Also, their sample size is small in this dataset. <br>
+By dropping the classical car outliers, the adjusted R<sup>2</sup> increased (0.08 vs 0.03) and the estimates for the intercept and year have changed significantly
+
+#### <span style="color: #FFBF00;"> *2.3.2 Relationship of log.rate.daily ~ rating and review count* </span>
+
+```{r}
+sum(is.na(carRentals.noClassical$rating))
+```
+
+```{r}
+carRentals.noClassical[is.na(carRentals.noClassical$rating) & carRentals.noClassical$renterTripsTaken != 0,]
+```
+
+All rating entries with NA are for cars which have 0 reviews, so this is a logical non-existance of data rather than a missing values problem
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ reviewCount, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ rating + reviewCount, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=5)
+par(mfrow=c(1,2))
+
+plot(log.rate.daily ~ rating, pch=19, data=carRentals.noClassical)
+abline(lm(log.rate.daily ~ rating, data=carRentals.noClassical), col="red", lwd=3)
+
+plot(log.rate.daily ~ reviewCount, pch=19, data=carRentals.noClassical)
+abline(lm(log.rate.daily ~ reviewCount, data=carRentals.noClassical), col="red", lwd=3)
+```
+
+**Explore the negative trend between reviewCount and log.rate.daily (*middle graph*)**
+
+```{r}
+lm.fit <- lm(reviewCount ~ vehicle.year + rating, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+options(repr.plot.width=5, repr.plot.height=5)
+plot(reviewCount ~ vehicle.year, pch=1, data=carRentals.noClassical)
+abline(lm(reviewCount ~ vehicle.year, data=carRentals.noClassical), col="red", lwd=3)
+```
+
+Counterintuitively, the more reviews the lower the rate. <br> Part of this could be attributed to older cars accumulating more reviews (*negative correlation of reviewCounts with vehicle.year)*
+
+#### <span style="color: #FFBF00;"> *2.3.2 Relationship of log.rate.daily ~ renterTripsTaken* </span>
+
+```{r}
+summary(carRentals.noClassical$renterTripsTaken)
+```
+
+```{r}
+hist(carRentals.noClassical$renterTripsTaken, breaks=sqrt(nrow(carRentals.noClassical)))
+```
+
+```{r}
+zero.renterTripsTaken <- carRentals.noClassical[carRentals.noClassical$renterTripsTaken == 0,]
+```
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=4)
+par(mfrow=c(1,2))
+hist(zero.renterTripsTaken$vehicle.year, breaks= (max(zero.renterTripsTaken$vehicle.year)-min(zero.renterTripsTaken$vehicle.year)+1))
+hist(carRentals.noClassical$vehicle.year, breaks= (max(carRentals.noClassical$vehicle.year)-min(carRentals.noClassical$vehicle.year)+1))
+```
+
+**Check ratio of zero trips per stock of cars for each year**
+
+```{r}
+count.rows.perYear <- as.data.frame(table(zero.renterTripsTaken$vehicle.year))
+zero.renterTripsTaken.perYear <- as.data.frame(table(carRentals.noClassical$vehicle.year))
+df12 <- left_join(zero.renterTripsTaken.perYear, count.rows.perYear, by = 'Var1')
+df12$ratio.zeroTrips.perYear <- df12$Freq.y / df12$Freq.x
+df12 <- df12[-c(1:4),]
+```
+
+```{r}
+options(repr.plot.width=5, repr.plot.height=5)
+plot(x=df12$Var1, y=df12$ratio.zeroTrips.perYear, data=df12)
+```
+
+```{r}
+count.renterTripsTaken <- carRentals.noClassical %>% count(renterTripsTaken)
+```
+
+```{r}
+summary(count.renterTripsTaken)
+```
+
+**Distribution of "Count" of renterTripsTaken**
+
+```{r}
+hist(count.renterTripsTaken$n, breaks=80)
+```
+
+```{r}
+carRentals.noClassical[carRentals.noClassical$renterTripsTaken == 0,]
+```
+
+**Regression on renterTripsTaken (as-is)**
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ renterTripsTaken, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+plot(log.rate.daily ~ renterTripsTaken, pch=19, data=carRentals.noClassical)
+abline(lm.fit, col="red", lwd=3)
+```
+
+**Regression on renterTripsTaken (dropped rows with 0 trips prior to 2020)**
+
+```{r}
+cutoffYear.zeroTrips <- 2020
+lm.fit <- lm(log.rate.daily ~ renterTripsTaken, data=carRentals.noClassical[(carRentals.noClassical$renterTripsTaken != 0 & carRentals.noClassical$vehicle.year < cutoffYear.zeroTrips) | carRentals.noClassical$vehicle.year >= cutoffYear.zeroTrips,])
+summary(lm.fit)
+```
+
+No rows are dropped based on number of taken trips
+
+```{r}
+mse.usd(lm.fit)
+```
+
+### <span style="color: LightSalmon;"> 2.4 Relations to Categorical Features </span>
+
+#### <span style="color: #FFBF00;"> *2.4.1 Relationship of log.rate.daily ~ vehicle.make* </span>
+
+##### <span style="color: Teal;"> *2.4.1.1 Problems with vehicle.make data* </span>
+
+**Concilliation of Multi-spelled brands**
+
+Brand variable requires consolidation if it is to be used properly.
+
+```{r}
+carRentals.noClassical %>% count(vehicle.make)
+```
+
+##### <span style="color: Teal;"> *2.4.1.2 Reconciliation of multi-spelled car makes with the most commonly spelled version* </span>
+
+```{r}
+makes.to.change <- c("Alfa-romeo", "INFINITI", "Mercedes-benz")
+makes.references <- c("Alfa Romeo", "Infiniti", "Mercedes-Benz")
+```
+
+```{r}
+for(i in 1:length(makes.to.change)) {
+  makes.to.change.rows <- carRentals.noClassical[carRentals.noClassical$vehicle.make == makes.to.change[i],]
+  for(j in 1:nrow(makes.to.change.rows)) {
+    row.temp <- makes.to.change.rows[j,]
+    carRentals.noClassical[row.names(row.temp), "vehicle.make"] <- makes.references[i]
+  }
+}
+```
+
+Confirm successful reconciliation of makes
+
+```{r}
+carRentals.noClassical %>% count(vehicle.make)
+```
+
+Reset factors
+
+```{r}
+carRentals.noClassical$vehicle.make <- droplevels(carRentals.noClassical$vehicle.make)
+```
+
+```{r}
+table(carRentals.noClassical$vehicle.make)
+```
+
+```{r}
+options(repr.plot.width=15, repr.plot.height=10)
+par(mfrow=c(2,1))
+boxplot(carRentals.noClassical$log.rate.daily ~ vehicle.make, data=carRentals.noClassical, las=2)
+plotmeans(log.rate.daily ~ vehicle.make, data=carRentals.noClassical, las=2)
+```
+
+##### <span style="color: Teal;"> *2.4.1.3 Regression of log.rate.daily ~ vehicle.make* </span>
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ vehicle.make, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+summary(aov(log.rate.daily ~ vehicle.make, data=carRentals.noClassical))
+```
+
+vehicle.make is a significantly explanative feature
+
+#### <span style="color: #FFBF00;"> *2.4.2 Relationship of log.rate.daily ~ vehicle.model* </span>
+
+##### <span style="color: Teal;"> *2.4.2.1 Problems with vehicle.model data* </span>
+
+**Concilliation of Multi-spelled models**
+
+Model variable requires consolidation if it is to be used properly.
+
+```{r}
+print(carRentals.noClassical %>% count(vehicle.model))
+```
+
+##### <span style="color: Teal;"> *2.4.2.2 Reconciliation of multi-spelled car model with the most commonly spelled version* </span>
+
+```{r}
+models.to.change <- c("2-Series", "3-Series", "4-Series", "488 Gtb", "5-Series", "7-Series", "Accord Hybrid", "Accord Sedan", "Avalon Hybrid", "C-Max Hybrid", "Camry Hybrid", "Civic Sedan", "Corolla Hybrid", "e-Golf", "E-Golf", "F-Type", "Fusion Hybrid", "I3", "I8", "RAV4 Hybrid", "Silverado 1500 Hybrid", "Soul EV", "Tahoe Hybrid", "X5 eDrive")
+models.references <- c("2 Series", "3 Series", "4 Series", "488GTB", "5 Series", "7 Series", "Accord", "Accord", "Avalon", "C-Max", "Camry", "Civic", "Corolla", "Golf", "Golf", "F-TYPE", "Fusion", "i3", "i8", "RAV4", "Silverado 1500", "Soul", "Tahoe", "X5")
+```
+
+```{r}
+for(i in 1:length(models.to.change)) {
+  models.to.change.rows <- carRentals.noClassical[carRentals.noClassical$vehicle.model == models.to.change[i],]
+  for(j in 1:nrow(models.to.change.rows)) {
+    row.temp <- models.to.change.rows[j,]
+    carRentals.noClassical[row.names(row.temp), "vehicle.model"] <- models.references[i]
+  }
+}
+```
+
+Confirm successful reconciliation of makes
+
+```{r}
+carRentals.noClassical %>% count(vehicle.model)
+```
+
+Reset factors
+
+```{r}
+carRentals.noClassical$vehicle.model <- droplevels(carRentals.noClassical$vehicle.model)
+```
+
+```{r}
+options(repr.plot.width=15, repr.plot.height=10)
+par(mfrow=c(2,1))
+boxplot(carRentals.noClassical$log.rate.daily ~ vehicle.model, data=carRentals.noClassical, las=2)
+plotmeans(log.rate.daily ~ vehicle.model, data=carRentals.noClassical, las=2)
+```
+
+##### <span style="color: Teal;"> *2.4.2.3 Regression of log.rate.daily ~ vehicle.model* </span>
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ vehicle.model, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+summary(aov(log.rate.daily ~ vehicle.model, data=carRentals.noClassical))
+```
+
+#### <span style="color: #FFBF00;"> *2.4.3 Relationship of log.rate.daily ~ fuelType* </span>
+
+##### <span style="color: Teal;"> *2.4.3.1 Problems with fuelType data* </span>
+
+```{r}
+unique(carRentals.noClassical$fuelType)
+```
+
+```{r}
+table(carRentals.noClassical$fuelType)
+```
+
+```{r}
+na.fuel.rows <- carRentals.noClassical[carRentals.noClassical$fuelType == "",][,c("vehicle.make", "vehicle.model", "vehicle.year")]
+unique(na.fuel.rows)
+```
+
+```{r}
+options(repr.plot.width=8, repr.plot.height=5)
+boxplot(carRentals.noClassical$log.rate.daily ~ fuelType, data=carRentals.noClassical)
+```
+
+```{r}
+options(repr.plot.width=5, repr.plot.height=4)
+hist(unique(na.fuel.rows)$vehicle.year, breaks=(max(unique(na.fuel.rows$vehicle.year))-min(unique(na.fuel.rows$vehicle.year))+1))
+```
+
+Exploring an example below, a lot of car models with missing fuelType have other entries with existing values
+
+```{r}
+carRentals.noClassical[carRentals.noClassical$vehicle.make == "Toyota" &
+    carRentals.noClassical$vehicle.model == "Camry" &
+    carRentals.noClassical$vehicle.year == 2020,]
+```
+
+##### <span style="color: Teal;"> *2.4.3.2 Imputation of missing fuelType's ~ fuelType* </span>
+
+**Impute missing fuelType with the most common one for each type (*type: c(make,model,year)*)**
+
+```{r}
+global.fuel.mode <- as.character(Mode(carRentals.noClassical$fuelType))
+```
+
+```{r}
+carRentals.noClassical[rownames(na.fuel.rows),]
+```
+
+```{r}
+for(i in 1:nrow(na.fuel.rows)) {
+  row.temp <- na.fuel.rows[i,]
+  df.temp <- carRentals.noClassical[carRentals.noClassical$vehicle.make == row.temp$vehicle.make &
+    carRentals.noClassical$vehicle.model == row.temp$vehicle.model &
+    carRentals.noClassical$vehicle.year == row.temp$vehicle.year &
+    carRentals.noClassical$fuelType != "",]
+  mode.temp <- as.character(Mode(df.temp$fuelType))
+  if(is.na(mode.temp) | mode.temp =="") {
+    mode.temp <- global.fuel.mode
+  }
+  carRentals.noClassical[row.names(row.temp), "fuelType"] <- mode.temp
+}
+```
+
+```{r}
+carRentals.noClassical[carRentals.noClassical$vehicle.make == "Toyota" &
+    carRentals.noClassical$vehicle.model == "Camry" &
+    carRentals.noClassical$vehicle.year == 2020,]
+```
+
+Confirm successful filling of empty fuelType cells
+
+```{r}
+table(carRentals.noClassical$fuelType)
+```
+
+Reset factors to drop empty ""
+
+```{r}
+carRentals.noClassical$fuelType <- droplevels(carRentals.noClassical$fuelType)
+```
+
+```{r}
+table(carRentals.noClassical$fuelType)
+```
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=5)
+par(mfrow=c(1,2))
+boxplot(carRentals.noClassical$log.rate.daily ~ fuelType, data=carRentals.noClassical)
+plotmeans(log.rate.daily ~ fuelType, data=carRentals.noClassical)
+```
+
+##### <span style="color: Teal;"> *2.4.3.3 Regression of log.rate.daily ~ fuelType* </span>
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ fuelType, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+```{r}
+mae.usd(lm.fit)
+```
+
+```{r}
+summary(aov(log.rate.daily ~ fuelType, data=carRentals.noClassical))
+```
+
+fuelType is a significantly explanative feature
+
+#### <span style="color: #FFBF00;"> *2.4.4 Relationship of log.rate.daily ~ vehicle.type* </span>
+
+```{r}
+unique(carRentals.noClassical$vehicle.type)
+```
+
+```{r}
+table(carRentals.noClassical$vehicle.type)
+```
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=5)
+par(mfrow=c(1,2))
+boxplot(carRentals.noClassical$log.rate.daily ~ vehicle.type, data=carRentals.noClassical)
+plotmeans(log.rate.daily ~ vehicle.type, data=carRentals.noClassical)
+```
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ vehicle.type, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+summary(aov(log.rate.daily ~ vehicle.type, data=carRentals.noClassical))
+```
+
+vehicle.type is a significantly explanative feature
+
+### <span style="color: LightSalmon;"> *2.5 Creation of New Features* </span>
+
+#### <span style="color: #FFBF00;"> *2.5.1 city.has.airport <- location.city==airportcity* </span>
+
+```{r}
+carRentals.noClassical$city.has.airport <- as.character(carRentals.noClassical$location.city) == as.character(carRentals.noClassical$airportcity)
+```
+
+```{r}
+table(carRentals.noClassical$city.has.airport)
+```
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=5)
+par(mfrow=c(1,2))
+boxplot(carRentals.noClassical$log.rate.daily ~ city.has.airport, data=carRentals.noClassical)
+plotmeans(log.rate.daily ~ city.has.airport, data=carRentals.noClassical)
+```
+
+```{r}
+lm.fit <- lm(log.rate.daily ~ city.has.airport, data=carRentals.noClassical)
+summary(lm.fit)
+```
+
+```{r}
+mse.usd(lm.fit)
+```
+
+city.has.airport is a significantly explanative feature
+
+## <span style="color: IndianRed;"> 3. Modelling </span>
+
+#### <span style="color: LightSalmon;"> *3.1 Develop overall Linear Regression Model* </span>
+
+##### <span style="color: Teal;"> *3.1.1 Fit Linear Regression Model with All Numerical Features* </span>
+
+```{r}
+full.model <- lm(log.rate.daily ~ vehicle.year + rating + reviewCount + renterTripsTaken, data=carRentals.noClassical)
+summary(full.model)
+```
+
+```{r}
+mse.usd(full.model)
+```
+
+##### <span style="color: Teal;"> *3.1.2 Fit Linear Regression Model with All Categorical Features* </span>
+
+**With make, without model**
+
+```{r}
+full.model <- lm(log.rate.daily ~ fuelType + vehicle.type + city.has.airport + vehicle.make, data=carRentals.noClassical)
+summary(full.model)
+```
+
+```{r}
+mse.usd(full.model)
+```
+
+**With model, without make**
+
+```{r}
+full.model <- lm(log.rate.daily ~ fuelType + vehicle.type + city.has.airport + vehicle.model, data=carRentals.noClassical)
+summary(full.model)
+```
+
+```{r}
+mse.usd(full.model)
+```
+
+**With both model and make**
+
+```{r}
+full.model <- lm(log.rate.daily ~ fuelType + vehicle.type + city.has.airport + vehicle.make + vehicle.model, data=carRentals.noClassical)
+summary(full.model)
+```
+
+```{r}
+mse.usd(full.model)
+```
+
+##### <span style="color: Teal;"> *3.1.3 Fit Linear Regression Model with All Chosen Features* </span>
+
+**With both make and model**
+
+```{r}
+full.model <- lm(log.rate.daily ~ vehicle.year + rating + reviewCount + renterTripsTaken +
+    fuelType + vehicle.type + city.has.airport + vehicle.make + vehicle.model, data=carRentals.noClassical)
+summary(full.model)
+```
+
+```{r}
+mse.usd(full.model)
+```
+
+**With make, without model**
+
+```{r}
+full.model <- lm(log.rate.daily ~ vehicle.year + rating + reviewCount + renterTripsTaken +
+    fuelType + vehicle.type + city.has.airport + vehicle.make, data=carRentals.noClassical)
+summary(full.model)
+```
+
+```{r}
+mse.usd(full.model)
+```
+
+**Without make, with model**
+
+```{r}
+full.model <- lm(log.rate.daily ~ vehicle.year + rating + reviewCount + renterTripsTaken +
+    fuelType + vehicle.type + city.has.airport + vehicle.model, data=carRentals.noClassical)
+summary(full.model)
+```
+
+```{r}
+mse.usd(full.model)
+```
+
+```{r}
+options(repr.plot.width=12, repr.plot.height=12)
+par(mfrow=c(2,2))
+plot(full.model)
+```
+
+##### <span style="color: Teal;"> *3.1.2 Check Multicolliniarity* </span>
+
+```{r}
+names(full.model)
+```
+
+**Identify dummy variables that cause multicollineariy issue**
+
+```{r}
+alias(full.model)
+```
+
+Our set of features suffer from multicollinearity problem. <br>Stepwise feature selection will be applied to eliminate least explanative features in hope of reducing the muticollinearity problem.
+
+##### <span style="color: Teal;"> *3.1.3 Stepwise Linear Regression Model* </span>
+
+```{r}
+step.model <- stepAIC(full.model, direction="both", trace=FALSE, k=20)
+summary(step.model)
+```
+
+```{r}
+mse.usd(step.model)
+```
+
+A comparable Adjusted R<sup>2</sup> is achieved (0.5864 vs 0.5880) even when fuelType, reviewCount, and retnerTripsTaken are dropped.
+
+```{r}
+vif(step.model)
+```
+
+```{r}
+sqrt(vif(step.model))
+```
+
+The stepwise linear regression model no longer suffers from a multicollinearity problem as none of the features in  have sqrt(VIF) > 2
+
+#### <span style="color: LightSalmon;"> *3.2 Diagnostics* </span>
+
+```{r}
+summary(full.model$residuals)
+```
+
+```{r}
+summary(step.model$residuals)
+```
+
+```{r}
+shapiro.test(sample(full.model$residuals, 2000, replace=FALSE))
+```
+
+```{r}
+shapiro.test(sample(step.model$residuals, 2000, replace=FALSE))
+```
+
+```{r}
+options(repr.plot.width=5, repr.plot.height=4)
+ggqqplot(full.model$residuals)
+```
+
+```{r}
+options(repr.plot.width=5, repr.plot.height=4)
+ggqqplot(step.model$residuals)
+```
+
+```{r}
+ggdensity(full.model$residuals, fill="lightgray", title="Residuals") +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+```
+
+```{r}
+ggdensity(step.model$residuals, fill="lightgray", title="Residuals") +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+```
+
+```{r}
+options(repr.plot.width=15, repr.plot.height=6)
+ols_plot_resid_stand(full.model)
+```
+
+```{r}
+ols_plot_resid_stand(step.model)
+```
+
+##### <span style="color: Teal;"> *3.2.1 Robust Linear Regression Model* </span>
+
+### <span style="color: Salmon;"> *4 Regression Tree* </span>
+
+##### <span style="color: Teal;"> *4.1 Building the Regression tree* </span>
+
+```{r}
+cr_noclassical <- select(carRentals.noClassical, rate.daily, fuelType, rating, renterTripsTaken, reviewCount, vehicle.year, vehicle.type)
+```
+
+```{r}
+set.seed(1000)
+```
+
+```{r}
+sample_cr <- sample.split(cr_noclassical$rate.daily, SplitRatio = .70)
+```
+
+```{r}
+train_cr = subset(cr_noclassical, sample_cr ==TRUE)
+test_cr = subset(cr_noclassical, sample_cr == FALSE)
+```
+
+```{r}
+rtree <- rpart(rate.daily~., data = cr_noclassical, cp=0.001)
+printcp(rtree)
+```
+
+```{r}
+rpart.plot(rtree, cex=0.45)
+```
+
+The three significant features are: Fuel Type, Rating and Vehicle Year (in that order).
+
+```{r}
+cr_noclassicalii <- select(carRentals.noClassical, rate.daily, fuelType, rating, renterTripsTaken, reviewCount, vehicle.year, vehicle.type, vehicle.model, vehicle.make)
+```
+
+```{r}
+cr_noclassicalii <- cr_noclassicalii[!is.na(cr_noclassicalii$rating),]
+```
+
+```{r}
+sample_crii <- sample.split(cr_noclassicalii, SplitRatio = .70)
+```
+
+```{r}
+train_crii = subset(cr_noclassicalii, sample_crii ==TRUE)
+test_crii = subset(cr_noclassicalii, sample_crii == FALSE)
+```
+
+```{r}
+rfii <- randomForest(rate.daily~. -vehicle.model -vehicle.make, data = train_crii, importance = TRUE)
+```
+
+```{r}
+varImpPlot(rfii)
+```
+
+fuelType plays an important role in our model
